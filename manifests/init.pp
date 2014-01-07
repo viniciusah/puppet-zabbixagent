@@ -13,6 +13,7 @@
 class zabbixagent(
   $servers = '',
   $hostname = '',
+  $serversactive = '',
 ) {
   $servers_real = $servers ? {
     ''      => 'localhost',
@@ -21,6 +22,10 @@ class zabbixagent(
   $hostname_real = $hostname ? {
     ''      => $::fqdn,
     default => $hostname,
+  }
+  $serversactive_real = $serversactive ? {
+    ''      => '127.0.0.1',
+    default => $serversactive,
   }
 
   Package <| |> -> Ini_setting <| |>
@@ -37,13 +42,49 @@ class zabbixagent(
 
     debian, ubuntu: {
       package {'zabbix-agent' :
-        ensure  => installed
+        ensure  => installed,
+        require => Exec['aptitude_update']
       }
     }
   }
 
   case $::operatingsystem {
     debian, ubuntu, centos: {
+  	  file { 'zabbix_release_6' :
+        path   => '/tmp/zabbix-release_2.0-1_debian_6.deb',
+        ensure => 'present',
+        source => 'puppet:///modules/zabbixagent/debian/zabbix-release_2.0-1_debian_6.deb'
+      }      
+
+      file { 'zabbix_release_7' :
+        path   => '/tmp/zabbix-release_2.0-1_debian_7.deb',
+        ensure => 'present',
+        source => 'puppet:///modules/zabbixagent/debian/zabbix-release_2.0-1_debian_7.deb'
+      }
+
+      case $::lsbmajdistrelease {
+      6: {
+          exec {'add_repository':
+             command => 'dpkg -i /tmp/zabbix-release_2.0-1_debian_6.deb',
+             path    => '/usr/bin:/bin:/sbin:/usr/sbin',
+             require => File['zabbix_release_6']
+            }
+          }
+      7: {
+          exec {'add_repository':
+             command => 'dpkg -i /tmp/zabbix-release_2.0-1_debian_7.deb',
+             path    => '/usr/bin:/bin:/sbin:/usr/sbin',
+             require => File['zabbix_release_7']
+           }
+          }
+      }
+
+      exec {'aptitude_update':
+        command => 'aptitude update',
+        path    => '/usr/bin:/bin:/sbin:/usr/sbin',
+        require => Exec['add_repository']
+      }	
+		  
       service {'zabbix-agent' :
         ensure  => running,
         enable  => true,
@@ -75,6 +116,15 @@ class zabbixagent(
         setting => 'Include',
         value   => '/etc/zabbix/zabbix_agentd/',
         notify  => Service['zabbix-agent'],
+      }
+
+      ini_setting { 'server active setting':
+        ensure  => present,
+        path    => '/etc/zabbix/zabbix_agentd.conf',
+        section => '',
+        setting => 'ServerActive',
+        value   => join(flatten([$serversactive_real]), ','),
+        require => Package['zabbix-agent'],
       }
 
       file { '/etc/zabbix/zabbix_agentd':
